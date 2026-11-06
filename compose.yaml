@@ -1,0 +1,22 @@
+services:
+  mongo:
+    image: mongo:8.0
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "quit(db.adminCommand({ping: 1}).ok ? 0 : 1)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - mongo-data:/data/db
+  api:
+    build: .
+    environment:
+      QA_API_KEY: ${QA_API_KEY:?Set QA_API_KEY before starting Compose}
+      QA_MONGODB_URI: mongodb://mongo:27017
+    depends_on:
+      mongo:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8081:8080"
+volumes:
+  mongo-data:
