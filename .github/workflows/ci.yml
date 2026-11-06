@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    # Match the MongoDB 8.0 runner used by Payments (SERVER-121912).
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    services:
+      mongo:
+        image: mongo:8.0
+        ports: [27017:27017]
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'quit(db.adminCommand({ping: 1}).ok ? 0 : 1)'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      TEST_MONGODB_URI: mongodb://localhost:27017
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.12.18"
+      - run: uv python install
+      - run: bash scripts/ci.sh
+      - run: docker compose config --quiet
+        env:
+          QA_API_KEY: ci-build-only
+      - run: docker build -t ecommerce-store-qa:ci .
