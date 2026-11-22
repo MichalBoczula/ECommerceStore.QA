@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from json import dumps
 from uuid import UUID, uuid4
 
 from ecommerce_store_qa.application.ports import SessionRepository
@@ -72,3 +73,7 @@ def _utc_now() -> datetime:
     now = datetime.now(UTC)
     # MongoDB stores BSON datetimes at millisecond precision.
     return now.replace(microsecond=now.microsecond // 1000 * 1000)
+
+
+def canonical_json(value: object) -> str:
+    return dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False)

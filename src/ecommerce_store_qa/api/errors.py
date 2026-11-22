@@ -9,6 +9,12 @@ from pydantic import BaseModel, Field
 from pymongo.errors import ConnectionFailure
 from starlette.exceptions import HTTPException
 
+from ecommerce_store_qa.application.e2e_models import (
+    BaHandoffError,
+    E2EPublicationConflictError,
+    E2EUnavailableError,
+    UnsupportedProposalError,
+)
 from ecommerce_store_qa.application.session_service import (
     ExchangeConflictError,
     ExchangeNotFoundError,
@@ -58,6 +64,14 @@ ERRORS: dict[type[Exception], ErrorSpec] = {
     ExchangeNotFoundError: ErrorSpec(404, "exchange_not_found", "Exchange was not found."),
     ExchangeConflictError: ErrorSpec(409, "exchange_conflict", "The exchange ID already has different content."),
     ExchangeTooLargeError: ErrorSpec(413, "exchange_too_large", "The exchange exceeds the capture size limit."),
+    BaHandoffError: ErrorSpec(409, "ba_handoff_required", "Supply a published BA handoff with matching sources."),
+    UnsupportedProposalError: ErrorSpec(
+        409, "unsupported_e2e_proposal", "Select an author session and a matching Products read criterion."
+    ),
+    E2EPublicationConflictError: ErrorSpec(
+        409, "e2e_publication_conflict", "Check the managed E2E feature and any existing proposal branch."
+    ),
+    E2EUnavailableError: ErrorSpec(503, "e2e_dependency_unavailable", "Verify the BA and E2E GitHub configuration."),
     ConnectionFailure: UNAVAILABLE,
 }
 

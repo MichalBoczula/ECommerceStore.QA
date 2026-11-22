@@ -15,13 +15,20 @@ document keys. The request and response are persisted together in one insert.
 
 | Boundary | Foundation | Follow-up |
 | --- | --- | --- |
-| Jira | Issue reference and capture source | Read approved criteria through a Jira adapter |
-| Knowledge Assistant | Snapshot reference and capture source | Resolve and pin evidence from Azure RAG |
-| Agent | Operation, model and input/output evidence | Invoke the QA agent through an application port |
+| BA | Published handoff with Jira criterion and technical sources | Support more acceptance journeys |
+| Knowledge Assistant | Versioned evidence from the BA handoff | Resolve additional evidence for later journeys |
+| GitHub | Reviewed Gherkin proposal and E2E pull request | Expand the library of reusable Playwright steps |
 | Evaluation | Immutable evidence retrieval | Compare claims with pinned sources and record review labels |
 
-The QA worker will consume approved BA process versions and produce Playwright BDD and Allure evidence.
-A registered session represents metadata for orchestration. Execution status,
-queue delivery and workers will be introduced with the execution use cases.
-Capture records supply evidence for evaluation. Quality labels and any training
-dataset will have their own review and provenance.
+An author session fetches an approved and published BA run and checks the
+selected criterion against its cited sources. The first journey renders the
+catalog to phone details scenario using the checked-in E2E step vocabulary.
+The proposal keeps the BA run, draft hash, criterion and source snapshot with
+the rendered Gherkin in an immutable exchange.
+
+Publication verifies the reviewed feature hash and checks the BA handoff again.
+The GitHub adapter changes the managed feature on a proposal branch and opens a
+PR. The feature hash identifies the branch so a retry can find the same PR.
+QA stores the receipt in the session. The E2E workflow runs Playwright against
+the configured test environment and saves the Playwright and Allure results.
+An execute session remains available for recording execution evidence.
