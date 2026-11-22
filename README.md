@@ -29,6 +29,46 @@ the same write. A different payload for the same session and exchange IDs return
 `409`. The combined canonical JSON limit is 256 KiB. Clients supply reviewed,
 redacted payloads before capture. Request headers are outside the evidence contract.
 
+## Author a storefront BDD test
+
+The first journey opens a phone from the catalog and verifies its details.
+It uses the checked-in JavaScript steps in [ECommerceStore.E2E](https://github.com/MichalBoczula/ECommerceStore.E2E).
+The E2E default branch needs the starter suite before QA can publish proposals.
+
+| QA environment setting | Purpose |
+| --- | --- |
+| `QA_BA_API_URL` | Base URL of the BA API |
+| `QA_BA_API_KEY` | BA API key for reading the approved handoff |
+| `QA_E2E_GITHUB_TOKEN` | GitHub token with Contents and Pull requests write access scoped to `ECommerceStore.E2E` |
+
+Create an `author` session as above. Select the criterion describing the catalog
+to phone details journey in a published BA handoff for Products `GET /mobile-phones`
+or `GET /mobile-phones/{id}`. `criterionIndex` is zero-based. Use a new UUID for the
+proposal and reuse that UUID when retrying the same request.
+
+```http
+PUT /api/v1/sessions/{sessionId}/e2e-proposals/{proposalId}
+X-Api-Key: <QA_API_KEY>
+Content-Type: application/json
+
+{"baSessionId":"<BA session UUID>","baRunId":"<BA run UUID>","criterionIndex":0}
+```
+
+Review the returned Gherkin and the criterion, source commits and snapshot under
+`provenance`. Submit the returned `featureSha256` to open the pull request.
+
+```http
+PUT /api/v1/sessions/{sessionId}/e2e-proposals/{proposalId}/pull-request
+X-Api-Key: <QA_API_KEY>
+Content-Type: application/json
+
+{"featureSha256":"<reviewed SHA-256>"}
+```
+
+The response contains the PR URL or the current feature URL when the same
+proposal is already on `main`. GitHub Actions in E2E validates the Gherkin and
+runs the browser against the test URL configured in that repository.
+
 ## Verification
 
 Use Python from `.python-version` and uv from `pyproject.toml`.

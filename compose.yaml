@@ -13,6 +13,9 @@ services:
     environment:
       QA_API_KEY: ${QA_API_KEY:?Set QA_API_KEY before starting Compose}
       QA_MONGODB_URI: mongodb://mongo:27017
+      QA_BA_API_URL:
+      QA_BA_API_KEY:
+      QA_E2E_GITHUB_TOKEN:
     depends_on:
       mongo:
         condition: service_healthy

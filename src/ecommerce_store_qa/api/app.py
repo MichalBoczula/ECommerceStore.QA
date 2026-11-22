@@ -1,12 +1,12 @@
-import json
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from hmac import compare_digest
 from typing import Annotated, Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, FastAPI, Security
 from fastapi.security import APIKeyHeader
+from httpx2 import AsyncBaseTransport, AsyncClient
 from pymongo import AsyncMongoClient
 from pymongo.errors import PyMongoError
 from starlette.requests import Request
@@ -26,15 +26,25 @@ from ecommerce_store_qa.api.errors import (
     install_error_handlers,
     problem_responses,
 )
+from ecommerce_store_qa.application.e2e_models import AuthorRequest, E2EProposal, E2EPullRequest, PublishRequest
+from ecommerce_store_qa.application.e2e_service import E2EService
 from ecommerce_store_qa.application.ports import SessionRepository
-from ecommerce_store_qa.application.session_service import CaptureExchange, SessionService
+from ecommerce_store_qa.application.session_service import CaptureExchange, SessionService, canonical_json
+from ecommerce_store_qa.infrastructure.ba_handoff import BaHandoffClient
+from ecommerce_store_qa.infrastructure.github_e2e import GitHubFeaturePublisher
 from ecommerce_store_qa.infrastructure.mongo_repository import Document, MongoSessionRepository
 from ecommerce_store_qa.infrastructure.settings import Settings
 
 key_header = APIKeyHeader(name="X-Api-Key", auto_error=False)
 
 
-def create_app(settings: Settings | None = None, repository: SessionRepository | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    repository: SessionRepository | None = None,
+    *,
+    ba_transport: AsyncBaseTransport | None = None,
+    github_transport: AsyncBaseTransport | None = None,
+) -> FastAPI:
     config = settings or Settings()
     expected_key = config.api_key.get_secret_value().encode()
     if not expected_key:
@@ -42,16 +52,45 @@ def create_app(settings: Settings | None = None, repository: SessionRepository |
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
-        if repository is not None:
-            app.state.session_service = SessionService(repository)
-            yield
-            return
-
-        async with AsyncMongoClient[Document](
-            config.mongodb_uri.get_secret_value(), tz_aware=True, timeoutMS=3000
-        ) as client:
-            app.state.mongo = client
-            app.state.session_service = SessionService(MongoSessionRepository(client[config.mongodb_database]))
+        async with AsyncExitStack() as stack:
+            store = repository
+            if store is None:
+                client = await stack.enter_async_context(
+                    AsyncMongoClient[Document](
+                        config.mongodb_uri.get_secret_value(),
+                        tz_aware=True,
+                        timeoutMS=3000,
+                    )
+                )
+                app.state.mongo = client
+                store = MongoSessionRepository(client[config.mongodb_database])
+            sessions = SessionService(store)
+            app.state.session_service = sessions
+            handoffs = None
+            if config.ba_api_url is not None and config.ba_api_key.get_secret_value():
+                ba = await stack.enter_async_context(
+                    AsyncClient(
+                        base_url=str(config.ba_api_url).rstrip("/") + "/",
+                        headers={"X-Api-Key": config.ba_api_key.get_secret_value()},
+                        timeout=25,
+                        follow_redirects=False,
+                        transport=ba_transport,
+                    )
+                )
+                handoffs = BaHandoffClient(ba)
+            publisher = None
+            if token := config.e2e_github_token.get_secret_value():
+                github = await stack.enter_async_context(
+                    AsyncClient(
+                        base_url="https://api.github.com/",
+                        headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+                        timeout=25,
+                        follow_redirects=False,
+                        transport=github_transport,
+                    )
+                )
+                publisher = GitHubFeaturePublisher(github)
+            app.state.e2e_service = E2EService(sessions, handoffs, publisher)
             yield
 
     app = FastAPI(title="ECommerce Store QA", docs_url="/swagger", lifespan=lifespan)
@@ -63,6 +102,9 @@ def create_app(settings: Settings | None = None, repository: SessionRepository |
 
     def session_service(request: Request) -> SessionService:
         return cast(SessionService, request.app.state.session_service)
+
+    def e2e_service(request: Request) -> E2EService:
+        return cast(E2EService, request.app.state.e2e_service)
 
     router = APIRouter(prefix="/api/v1/sessions", tags=["Sessions"], dependencies=[Depends(authorize)])
 
@@ -100,8 +142,8 @@ def create_app(settings: Settings | None = None, repository: SessionRepository |
         service: Annotated[SessionService, Depends(session_service)],
     ) -> ExchangeResponse:
         try:
-            request_json = _canonical_json(body.request)
-            response_json = _canonical_json(body.response)
+            request_json = canonical_json(body.request)
+            response_json = canonical_json(body.response)
         except (ValueError, RecursionError) as error:
             raise RequestProblem(BAD_REQUEST) from error
         capture = CaptureExchange(body.source, request_json, response_json, body.model)
@@ -112,6 +154,26 @@ def create_app(settings: Settings | None = None, repository: SessionRepository |
         session_id: UUID, exchange_id: UUID, service: Annotated[SessionService, Depends(session_service)]
     ) -> ExchangeResponse:
         return ExchangeResponse.from_domain(await service.get_exchange(session_id, exchange_id))
+
+    @router.put("/{session_id}/e2e-proposals/{proposal_id}", responses=problem_responses(400, 401, 404, 409, 413, 503))
+    async def author_e2e(
+        session_id: UUID,
+        proposal_id: UUID,
+        body: AuthorRequest,
+        service: Annotated[E2EService, Depends(e2e_service)],
+    ) -> E2EProposal:
+        return await service.author(session_id, proposal_id, body)
+
+    @router.put(
+        "/{session_id}/e2e-proposals/{proposal_id}/pull-request", responses=problem_responses(400, 401, 404, 409, 503)
+    )
+    async def publish_e2e(
+        session_id: UUID,
+        proposal_id: UUID,
+        body: PublishRequest,
+        service: Annotated[E2EService, Depends(e2e_service)],
+    ) -> E2EPullRequest:
+        return await service.publish(session_id, proposal_id, body.feature_sha256)
 
     app.include_router(router)
     original_openapi = app.openapi
@@ -130,7 +192,3 @@ def create_app(settings: Settings | None = None, repository: SessionRepository |
 
     app.openapi = openapi
     return app
-
-
-def _canonical_json(value: object) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False)
