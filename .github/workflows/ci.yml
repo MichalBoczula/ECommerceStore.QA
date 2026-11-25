@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -34,4 +35,42 @@ jobs:
       - run: docker compose config --quiet
         env:
           QA_API_KEY: ci-build-only
-      - run: docker build -t ecommerce-store-qa:ci .
+      - name: Build the QA image
+        run: docker build --label "org.opencontainers.image.revision=${GITHUB_SHA}" -t ecommerce-store-qa:ci .
+      - name: Smoke-test the QA container
+        run: |
+          set -euo pipefail
+          qa="$(docker run -d --network host \
+            -e QA_API_KEY=ci-build-only -e QA_MONGODB_URI="$TEST_MONGODB_URI" \
+            ecommerce-store-qa:ci)"
+          trap 'docker rm -f "$qa" >/dev/null' EXIT
+          curl --fail --silent --show-error --retry 20 --retry-connrefused --retry-delay 1 --max-time 4 \
+            http://127.0.0.1:8080/health/ready
+      - name: Publish the verified image to Docker Hub
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        env:
+          DOCKER_USER: ${{ secrets.DOCKER_USER }}
+          DOCKER_TOKEN: ${{ secrets.DOCKER_TOKEN }}
+        run: |
+          set -euo pipefail
+          : "${DOCKER_USER:?Set the DOCKER_USER repository secret}"
+          : "${DOCKER_TOKEN:?Set the DOCKER_TOKEN repository secret}"
+          repository="${DOCKER_USER}/ecommerce-store-qa"
+          image="docker.io/$repository"
+          tag="$image:$GITHUB_SHA"
+          printf '%s' "$DOCKER_TOKEN" | docker login --username "$DOCKER_USER" --password-stdin
+          docker tag ecommerce-store-qa:ci "$tag"
+          docker push "$tag"
+          digest="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$tag" |
+            awk -F@ -v repository="$repository" '$1 == repository || $1 == "docker.io/" repository {print $2; exit}')"
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          mkdir -p artifacts
+          jq -n --arg application 'qa' --arg image "$image@$digest" --arg commit "$GITHUB_SHA" \
+            '{application: $application, imageReference: $image, commitSha: $commit}' > artifacts/image-reference.json
+      - name: Upload the immutable image reference
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-reference
+          path: artifacts/image-reference.json
+          if-no-files-found: error
