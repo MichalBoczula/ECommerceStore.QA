@@ -34,6 +34,7 @@ redacted payloads before capture. Request headers are outside the evidence contr
 The first journey opens a phone from the catalog and verifies its details.
 It uses the checked-in JavaScript steps in [ECommerceStore.E2E](https://github.com/MichalBoczula/ECommerceStore.E2E).
 The E2E default branch needs the starter suite before QA can publish proposals.
+QA renders Gherkin from a fixed template and the published BA handoff for this journey.
 
 | QA environment setting | Purpose |
 | --- | --- |
@@ -75,5 +76,7 @@ Use Python from `.python-version` and uv from `pyproject.toml`.
 Run `bash scripts/ci.sh` for locked install, format, lint, typing, API tests
 and the wheel build. Set `TEST_MONGODB_URI` to run the database-backed restart test.
 CI supplies a MongoDB service and builds the Docker image.
+Pushes and manual runs on `main` publish the verified image to Docker Hub.
+Use the digest in the `image-reference` artifact for deployment.
 
 See [low-level design](docs/lld.md).
